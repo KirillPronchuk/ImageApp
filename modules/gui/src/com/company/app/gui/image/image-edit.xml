@@ -1,0 +1,34 @@
+<!--
+  ~ Copyright (c) ${YEAR} ${PACKAGE_NAME}
+  -->
+
+<window xmlns="http://schemas.haulmont.com/cuba/window.xsd"
+        caption="msg://editCaption"
+        class="com.company.app.gui.image.ImageEdit"
+        datasource="imageDs"
+        focusComponent="imageBox"
+        messagesPack="com.company.app.gui.image">
+    <dsContext>
+        <datasource id="imageDs"
+                    class="com.company.app.entity.Image"
+                    view="_local"/>
+    </dsContext>
+    <layout expand="imageBox"
+            spacing="true">
+        <groupBox id="imageBox" caption="Photo" spacing="true"
+                   width="100%" expand="embeddedImage">
+            <embedded id="embeddedImage" width="100%"
+                      align="MIDDLE_CENTER"/>
+            <hbox align="BOTTOM_LEFT"
+                  spacing="true">
+                <upload id="uploadField"/>
+                <button id="downloadImageBtn"
+                        caption="msg://download"
+                        invoke="onDownloadImageBtnClick"/>
+                <button id="clearImageBtn"
+                        caption="msg://clear"
+                        invoke="onClearImageBtnClick"/>
+            </hbox>
+        </groupBox>
+    </layout>
+</window>

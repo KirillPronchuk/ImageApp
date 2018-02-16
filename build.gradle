@@ -1,0 +1,231 @@
+
+buildscript {
+    ext.cubaVersion = '6.6.1'
+    repositories {
+        maven {
+            url 'https://repo.cuba-platform.com/content/groups/work'
+            credentials {
+                username(rootProject.hasProperty('repoUser') ? rootProject['repoUser'] : 'cuba')
+                password(rootProject.hasProperty('repoPass') ? rootProject['repoPass'] : 'cuba123')
+            }
+        }
+    }
+    dependencies {
+        classpath "com.haulmont.gradle:cuba-plugin:$cubaVersion"
+    }
+}
+
+def globalModule = project(':app-global')
+def coreModule = project(':app-core')
+def guiModule = project(':app-gui')
+def webModule = project(':app-web')
+
+def servletApi = 'org.apache.tomcat:tomcat-servlet-api:8.0.26'
+
+
+apply(plugin: 'idea')
+apply(plugin: 'cuba')
+
+cuba {
+    artifact {
+        group = 'com.company.app'
+        version = '0.1'
+        isSnapshot = true
+    }
+    tomcat {
+        dir = "$project.rootDir/deploy/tomcat"
+        port = 8081
+    }
+    ide {
+        copyright = 'Copyright (c) ${YEAR} ${PACKAGE_NAME}'
+        classComment = '''/**
+ * @author ${USER}
+ */'''
+    }
+}
+
+dependencies {
+    appComponent("com.haulmont.cuba:cuba-global:$cubaVersion")
+}
+
+
+def postgres = 'org.postgresql:postgresql:9.4.1212'
+
+configure([globalModule, coreModule, guiModule, webModule]) {
+    apply(plugin: 'java')
+    apply(plugin: 'maven')
+    apply(plugin: 'idea')
+    apply(plugin: 'cuba')
+
+    dependencies {
+        testCompile('junit:junit:4.12')
+    }
+
+    task sourceJar(type: Jar) {
+        from file('src')
+        classifier = 'sources'
+    }
+
+    artifacts {
+        archives sourceJar
+    }
+}
+
+configure(globalModule) {
+    dependencies {
+
+    }
+
+    task enhance(type: CubaEnhancing) 
+}
+
+configure(coreModule) {
+
+    configurations {
+        jdbc
+        dbscripts
+    }
+
+    dependencies {
+        compile(globalModule)
+        provided(servletApi)
+        jdbc(postgres)
+        testRuntime(postgres)
+        compile('org.tensorflow:tensorflow:1.2.0')
+
+    }
+
+    task cleanConf(description: 'Cleans up conf directory')  {
+        doLast {
+            def dir = new File(cuba.tomcat.dir, '/conf/app-core')
+            if (dir.isDirectory()) {
+                ant.delete(includeemptydirs: true) {
+                    fileset(dir: dir, includes: '**/*', excludes: 'local.app.properties')
+                }
+            }
+        }
+    }
+
+    task deploy(dependsOn: [assemble, cleanConf], type: CubaDeployment) {
+        appName = 'app-core'
+        appJars('app-global', 'app-core')
+    }
+
+    task createDb(dependsOn: assembleDbScripts, description: 'Creates local database', type: CubaDbCreation) {
+        dbms = 'postgres'
+        host = 'localhost'
+        dbName = 'app'
+        dbUser = 'postgres'
+        dbPassword = '123456'
+    }
+
+    task updateDb(dependsOn: assembleDbScripts, description: 'Updates local database', type: CubaDbUpdate) {
+        dbms = 'postgres'
+        host = 'localhost'
+        dbName = 'app'
+        dbUser = 'postgres'
+        dbPassword = '123456'
+    }
+
+    task startTestDb(type: CubaHsqlStart) {
+        dbPort = 9002 // should be different from the default port 9001 used by Studio HSQLDB server
+        dbName = 'app_test'
+    }
+
+    task createTestDb(dependsOn: assemble, description: 'Creates local Postgres database for tests', type: CubaDbCreation) {
+        dbms = 'hsql'
+        host = 'localhost:9002'
+        dbName = 'app_test'
+        dbUser = 'sa'
+        dbPassword = ''
+    }
+}
+
+configure(guiModule) {
+    dependencies {
+        compile(globalModule)
+        compile('org.tensorflow:tensorflow:1.2.0')
+
+    }
+
+    task deployConf(type: Copy) {
+        from file('src')
+        include "com/company/app/**"
+        into "$cuba.tomcat.dir/conf/app"
+    }
+}
+
+configure(webModule) {
+    configurations {
+        webcontent
+        
+    }
+
+    dependencies {
+        provided(servletApi)
+        compile(globalModule)
+        compile(guiModule)
+
+    }
+
+    task webArchive(type: Zip) {
+        from file('web')
+        classifier = 'web'
+    }
+
+    artifacts {
+        archives webArchive
+    }
+
+    task deployConf(type: Copy) {
+        from file('src')
+        include "com/company/app/**"
+        into "$cuba.tomcat.dir/conf/app"
+    }
+    
+    task clearMessagesCache(type: CubaClearMessagesCache) {
+        appName = 'app'
+    }
+    deployConf.dependsOn clearMessagesCache
+
+    
+    task cleanConf(description: 'Cleans up conf directory') {
+        doLast {
+            def dir = new File(cuba.tomcat.dir, '/conf/app')
+            if (dir.isDirectory()) {
+                ant.delete(includeemptydirs: true) {
+                    fileset(dir: dir, includes: '**/*', excludes: 'local.app.properties')
+                }
+            }
+        }
+    }
+
+    task deploy(dependsOn: [assemble, cleanConf], type: CubaDeployment) {
+        appName = 'app'
+        appJars('app-global', 'app-gui', 'app-web')
+    }
+}
+
+
+
+
+task undeploy(type: Delete, dependsOn: ':app-web:cleanConf') {
+    delete("$cuba.tomcat.dir/shared")
+    delete("$cuba.tomcat.dir/webapps/app-core")
+    delete("$cuba.tomcat.dir/webapps/app")
+}
+
+task restart(dependsOn: ['stop', ':app-core:deploy', ':app-web:deploy'], description: 'Redeploys applications and restarts local Tomcat') {
+    doLast {
+        ant.waitfor(maxwait: 6, maxwaitunit: 'second', checkevery: 2, checkeveryunit: 'second') {
+            not {
+                socket(server: 'localhost', port: '8787')
+            }
+        }
+        start.execute()
+    }
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '3.4'
+}
