@@ -9,6 +9,7 @@ package com.company.app.gui.image;
 import com.haulmont.cuba.core.app.FileStorageService;
 import com.haulmont.cuba.core.entity.FileDescriptor;
 import com.haulmont.cuba.core.global.FileStorageException;
+import com.haulmont.cuba.core.global.UserSessionSource;
 import com.haulmont.cuba.gui.components.AbstractEditor;
 import com.haulmont.cuba.gui.components.Button;
 import com.haulmont.cuba.gui.components.Embedded;
@@ -19,13 +20,21 @@ import com.haulmont.cuba.gui.export.ExportDisplay;
 import com.haulmont.cuba.gui.export.ExportFormat;
 import com.haulmont.cuba.gui.upload.FileUploadingAPI;
 import org.apache.commons.lang.StringUtils;
+import org.apache.poi.ss.formula.functions.T;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.FileSystemXmlApplicationContext;
+import org.tensorflow.Session;
+import org.tensorflow.Tensor;
 
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.nio.FloatBuffer;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -57,32 +66,34 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
     @Inject
     private Datasource<com.company.app.entity.Image> imageDs;
     @Inject
-    private FileDescriptor imageDescriptor;
+    private UserSessionSource uss;
 
     private static final int IMG_HEIGHT = 600;
     private static final int IMG_WIDTH = 800;
-
-//    private static final int IMG_HEIGHT_MOD = 32;
-//    private static final int IMG_WIDTH_MOD = 32;
-//
-//    private static final int NB_LABELS = 43;
-//
-//    private static int conv_1_size = 9;
-//    private static int conv_1_nb = 256;
-//    private static int conv_2_size = 6;
-//    private static int conv_2_nb = 64;
 
 
     @Override
     public void init(Map<String, Object> params) {
         uploadField.addFileUploadSucceedListener(event -> {
+            ApplicationContext context = new FileSystemXmlApplicationContext("classpath:web-spring");
+
+            TfProcessor processor = (TfProcessor)context.getBean("TfProc");
+            Session session = processor.getSession();
+
 
             File file = fileUploadingAPI.getFile(uploadField.getFileId());
             if (file != null) {
-                int resolvedClass = predict(file.getAbsolutePath());
-                if(resolvedClass!=-1){
-                    String className = Labels.getLabels().get(resolvedClass);
-                    showNotification("Predicted class: " + resolvedClass + "\nClass name: " + className, NotificationType.HUMANIZED);
+                try{
+                    BufferedImage image = ImageIO.read(file);
+                    int resolvedClass = predict(image, session);
+                    if(resolvedClass!=-1){
+                        String className = Labels.getLabels().get(resolvedClass);
+                        showNotification("Predicted class: " + resolvedClass + "\nClass name: " + className, NotificationType.HUMANIZED);
+                    } else {
+                        showNotification("Not a sign", NotificationType.HUMANIZED);
+                    }
+                } catch (IOException e){
+                    showNotification("Cannot read image", NotificationType.HUMANIZED);
                 }
             } else
                 showNotification("Cannot find file in temporary storage", NotificationType.HUMANIZED);
@@ -164,40 +175,83 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         }
     }
 
-    private int predict(String fileName) {
+    private int predict(BufferedImage image, Session session) {
         int result = -1;
-        String prefix = "C:\\Users\\Kirill\\studio-projects\\PredictionScript\\";
-        try {
-            ProcessBuilder pb = new ProcessBuilder("python", prefix + "script\\test_single.py", prefix + "script\\outputs\\checkpoints\\c1s_9_c1n_256_c2s_6_c2n_64_c2d_0.7_c1vl_16_c1s_5_c1nf_16_c2vl_32_lr_0.0001_rs_1--TrafficSign--1511246130.7228131", fileName);
-            Process p = pb.start();
-            BufferedReader in = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String ret = in.readLine();
-            if(StringUtils.isNotBlank(ret)){
-                try {
-                    result = new Integer(ret).intValue();
-                } catch (NumberFormatException e){
-                    result = -1;
+        float[] array = resizeAndConvert2Grayscale(image);
+        Tensor inputTensor = createInputTensor(array);
+        Tensor outputTensor = performModel(session, inputTensor);
+        result = predictClass(outputTensor);
+
+        return result;
+    }
+
+    private float[] resizeAndConvert2Grayscale(BufferedImage source){
+        float[] array = new float[1024];
+        try{
+            int IMG_WIDTH = 32;
+            int IMG_HEIGHT = 32;
+            BufferedImage gray = new BufferedImage(IMG_WIDTH, IMG_HEIGHT, source.getType());
+            Graphics2D g2d = gray.createGraphics();
+            g2d.drawImage(source, 0, 0, IMG_WIDTH, IMG_HEIGHT, null);
+            g2d.dispose();
+            for (int i = 0; i < gray.getHeight(); i++) {
+                for (int j = 0; j < gray.getWidth(); j++) {
+                    int rgb = gray.getRGB(i, j);
+                    int r = (rgb >> 16) & 0xFF;
+                    int g = (rgb >> 8) & 0xFF;
+                    int b = (rgb & 0xFF);
+                    int grayPixel = (r + g + b) / 3;
+                    float floatPixel = (float)grayPixel;
+                    array[j * IMG_WIDTH + i] =  floatPixel/255*2-1;
                 }
             }
-
-            BufferedReader in_err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
-            String line = "";
-            while (true) {
-                String tempLine = in_err.readLine();
-                if (tempLine == null) { break; }
-                line = line + tempLine + "\n";
-            }
-            if(StringUtils.isNotBlank(line)){
-                System.out.println("Error: " + line);
-            }
-        } catch (IOException e) {
-            showNotification("Cannot perform prediction script", NotificationType.HUMANIZED);
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+        return array;
+    }
+
+    private int predictClass(Tensor resultTensor){
+        float[][] m = new float[1][43];
+        m[0] = new float[43];
+        Arrays.fill(m[0], 0);
+
+
+        float[][] matrix = (float[][]) resultTensor.copyTo(m);
+        float maxVal = 0;
+        int inc = 0;
+        int predict = -1;
+        for (float val : matrix[0]) {
+            if (val > maxVal) {
+                predict = inc;
+                maxVal = val;
+            }
+            inc++;
+        }
+        return predict;
+    }
+
+    private Tensor createInputTensor(float[] array){
+        Tensor inputTensor = Tensor.create(new long[]{1, 32, 32, 1});
+        if(array!=null && array.length==1024){
+            FloatBuffer fb = FloatBuffer.allocate(1024);
+            fb.put(array);
+            fb.rewind();
+            inputTensor = Tensor.create(new long[]{1, 32, 32, 1}, fb);
+        }
+        return inputTensor;
+    }
+
+    private Tensor performModel(Session sess, Tensor inputTensor){
+        Tensor result = sess.runner()
+                .feed("input_tensor", inputTensor)
+                .fetch("output_tensor")
+                .run().get(0);
         return result;
     }
 
     private static class Labels{
-        private static Map<Integer, String> labels = new HashMap<>();
+        private static final Map<Integer, String> labels = new HashMap<>();
         static {
             labels.put(0, "Speed limit (20km/h)");
             labels.put(1, "Speed limit (30km/h)");
@@ -249,71 +303,5 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         }
     }
 
-//    private static BufferedImage resize(BufferedImage origin, int newWidth, int newHeight) {
-//        java.awt.Image scaledInstance = origin.getScaledInstance(newWidth, newHeight, java.awt.Image.SCALE_SMOOTH);
-//        BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
-//
-//        Graphics2D g2d = image.createGraphics();
-//        g2d.drawImage(scaledInstance, 0, 0, null);
-//        g2d.dispose();
-//
-//        return image;
-//    }
 
-//    private static float[][][] createArrayFromImage (BufferedImage image){
-//        BufferedImage resizedImage = resize(image, IMG_WIDTH_MOD, IMG_HEIGHT_MOD);
-////        int width = resizedImage.getWidth();
-////        int height = resizedImage.getHeight();
-//        float [][][] result = new float[IMG_HEIGHT_MOD][IMG_WIDTH_MOD][3];
-//        Color color;
-//        for(int i = 0; i<IMG_HEIGHT_MOD; i++){
-//            for (int j = 0; j<IMG_WIDTH_MOD; j++){
-//                color = new Color(image.getRGB(i, j));
-//                result[i][j][0] = color.getRed()/255;
-//                result[i][j][1] = color.getGreen()/255;
-//                result[i][j][2] = color.getBlue()/255;
-//            }
-//        }
-//        return result;
-//    }
-//
-//    private static int maxIndex(float[] probabilities) {
-//        int best = 0;
-//        for (int i = 1; i < probabilities.length; ++i) {
-//            if (probabilities[i] > probabilities[best]) {
-//                best = i;
-//            }
-//        }
-//        return best;
-//    }
-//
-//    private void initGraph(){
-//        try (Graph g = new Graph();
-//             Session s = new Session(g)) {
-//
-//            Output tf_conv_2_dropout = g.opBuilder("Placeholder", "conv_2_dropout")
-//                    .setAttr("dtype", DataType.FLOAT)
-//                    .setAttr("shape", Shape.unknown())
-//                    .build().output(0);
-//
-//            Output  tf_images = g.opBuilder("Placeholder", "images")
-//                    .setAttr("dtype", DataType.FLOAT)
-//                    .setAttr("shape", Shape.make(-1, 32, 32, 3))
-//                    .build().output(0);
-//
-//            Output  tf_labels = g.opBuilder("Placeholder", "labels")
-//                    .setAttr("dtype", DataType.INT64)
-//                    .setAttr("shape", Shape.make(-1))
-//                    .build().output(0);
-//        }
-//    }
-//
-//    private Tensor buildMainNetwork(Output images, Output conv_2_dropout){
-//        Shape shape = Shape.make(conv_1_size, conv_1_size, 3, conv_1_nb);
-//
-//    }
-//
-//    private Tensor create_conv(Output prev, Shape shape){
-//
-//    }
 }
