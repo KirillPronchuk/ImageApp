@@ -8,7 +8,7 @@ public class TfProcessor {
 
     public Session getSession() {
         if(session==null){
-            SavedModelBundle smb = SavedModelBundle.load("/home/kirill/IdeaProjects/tfloader/src/main/resources", "serve");
+            SavedModelBundle smb = SavedModelBundle.load(".", "serve");
             session = smb.session();
         }
         return session;
