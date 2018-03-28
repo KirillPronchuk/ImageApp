@@ -10,6 +10,7 @@ import com.haulmont.cuba.core.app.FileStorageService;
 import com.haulmont.cuba.core.entity.FileDescriptor;
 import com.haulmont.cuba.core.global.FileStorageException;
 import com.haulmont.cuba.core.global.UserSessionSource;
+import com.haulmont.cuba.gui.AppConfig;
 import com.haulmont.cuba.gui.components.AbstractEditor;
 import com.haulmont.cuba.gui.components.Button;
 import com.haulmont.cuba.gui.components.Embedded;
@@ -19,12 +20,15 @@ import com.haulmont.cuba.gui.data.Datasource;
 import com.haulmont.cuba.gui.export.ExportDisplay;
 import com.haulmont.cuba.gui.export.ExportFormat;
 import com.haulmont.cuba.gui.upload.FileUploadingAPI;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.poi.ss.formula.functions.T;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.support.FileSystemXmlApplicationContext;
+import org.tensorflow.Graph;
 import org.tensorflow.Session;
 import org.tensorflow.Tensor;
 
@@ -75,9 +79,12 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
     @Override
     public void init(Map<String, Object> params) {
         uploadField.addFileUploadSucceedListener(event -> {
-            ApplicationContext context = new FileSystemXmlApplicationContext("classpath:web-spring");
 
-            TfProcessor processor = (TfProcessor)context.getBean("TfProc");
+            AnnotationConfigApplicationContext context =
+                    new AnnotationConfigApplicationContext(TfConfig.class);
+
+            TfProcessor processor = context.getBean("tfProcessorService", TfProcessor.class);
+
             Session session = processor.getSession();
 
 

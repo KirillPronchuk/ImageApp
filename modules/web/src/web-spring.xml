@@ -33,7 +33,4 @@
     <bean class="com.company.app.web.App"
           name="cuba_App"
           scope="prototype"/>
-    <bean class="com.company.app.gui.image.TfProcessor"
-          name="TfProc"
-          scope="singleton"/>
 </beans>
