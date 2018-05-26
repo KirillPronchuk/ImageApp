@@ -22306,7 +22306,7 @@ meta_graphs {
             dtype: DT_STRING
             tensor_shape {
             }
-            string_val: "_temp_89f21d690b7d4b399140d34dd56dab37/part"
+            string_val: "_temp_9de4261424a94cfd8295e7ae23cdcc6c/part"
           }
         }
       }

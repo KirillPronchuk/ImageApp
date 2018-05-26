@@ -91,7 +91,10 @@ configure(coreModule) {
         provided(servletApi)
         jdbc(postgres)
         testRuntime(postgres)
-        compile('org.tensorflow:tensorflow:1.2.0')
+        compile('org.tensorflow:tensorflow:1.4.0')
+        compile 'org.openpnp:opencv:3.2.0-1'
+        compile('org.openpnp:opencv:3.2.0-1')
+
 
     }
 
@@ -107,6 +110,7 @@ configure(coreModule) {
     }
 
     task deploy(dependsOn: [assemble, cleanConf], type: CubaDeployment) {
+//        project.ext."java.library.path" = "/home/kirill/Documents/Localizer/OpenCV/build/lib"
         appName = 'app-core'
         appJars('app-global', 'app-core')
     }
@@ -144,7 +148,9 @@ configure(coreModule) {
 configure(guiModule) {
     dependencies {
         compile(globalModule)
-        compile('org.tensorflow:tensorflow:1.2.0')
+        compile('org.tensorflow:tensorflow:1.4.0')
+        compile 'org.openpnp:opencv:3.2.0-1'
+        compile('org.openpnp:opencv:3.2.0-1')
 
     }
 
@@ -228,4 +234,11 @@ task restart(dependsOn: ['stop', ':app-core:deploy', ':app-web:deploy'], descrip
 
 task wrapper(type: Wrapper) {
     gradleVersion = '3.4'
+}
+
+task buildWar(type: CubaWarBuilding) {
+    appProperties = ['cuba.automaticDatabaseUpdate' : true,
+'java.library.path' : '/home/kirill/Documents/Localizer/OpenCV/build/lib']
+    singleWar = false
+    appHome = 'app_home'
 }

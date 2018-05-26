@@ -23,6 +23,11 @@ import com.haulmont.cuba.gui.upload.FileUploadingAPI;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.poi.ss.formula.functions.T;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfRect;
+import org.opencv.core.Rect;
+import org.opencv.imgcodecs.Imgcodecs;
+import org.opencv.objdetect.CascadeClassifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
@@ -81,29 +86,52 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         uploadField.addFileUploadSucceedListener(event -> {
 
             AnnotationConfigApplicationContext context =
-                    new AnnotationConfigApplicationContext(TfConfig.class);
-
-            TfProcessor processor = context.getBean("tfProcessorService", TfProcessor.class);
-
-            Session session = processor.getSession();
+                    new AnnotationConfigApplicationContext(TfConfig.class, CcConfig.class);
 
 
-            File file = fileUploadingAPI.getFile(uploadField.getFileId());
-            if (file != null) {
-                try{
+            try {
+                TfProcessor processor = context.getBean("tfProcessorService", TfProcessor.class);
+
+                Session session = processor.getSession();
+
+                CcProcessor ccprocessor = context.getBean("ccProcessorService", CcProcessor.class);
+
+                CascadeClassifier classifier = ccprocessor.getClassifier();
+
+                File file = fileUploadingAPI.getFile(uploadField.getFileId());
+
+                if (file != null) {
+                    Mat matimage = Imgcodecs.imread(file.getAbsolutePath());
+                    MatOfRect signDetections = new MatOfRect();
+                    classifier.detectMultiScale(matimage, signDetections);
+
+
                     BufferedImage image = ImageIO.read(file);
-                    int resolvedClass = predict(image, session);
-                    if(resolvedClass!=-1){
-                        String className = Labels.getLabels().get(resolvedClass);
-                        showNotification("Predicted class: " + resolvedClass + "\nClass name: " + className, NotificationType.HUMANIZED);
-                    } else {
-                        showNotification("Not a sign", NotificationType.HUMANIZED);
+                    for (Rect rect : signDetections.toArray()) {
+                        int x = rect.x;
+                        int y = rect.y;
+                        int width = rect.width;
+                        int height = rect.height;
+
+                        BufferedImage subimage = image.getSubimage(x, y, x + width, y + height);
+                        int resolvedClass = predict(subimage, session);
+                        if (resolvedClass != -1) {
+                            String className = Labels.getLabels().get(resolvedClass);
+                            showNotification("Predicted class: " + resolvedClass +
+                                            "\nClass name: " + className +
+                                            "\nx0=" + x + ", y0=" + y +
+                                            "\nx1=" + (x + width) + ", y1=" + (y + height)
+                                    , NotificationType.HUMANIZED);
+                        } else {
+                            showNotification("Not a sign", NotificationType.HUMANIZED);
+                        }
                     }
-                } catch (IOException e){
-                    showNotification("Cannot read image", NotificationType.HUMANIZED);
-                }
-            } else
-                showNotification("Cannot find file in temporary storage", NotificationType.HUMANIZED);
+
+                } else
+                    showNotification("Cannot find file in temporary storage", NotificationType.HUMANIZED);
+            } catch (IOException e) {
+                showNotification("Cannot read image", NotificationType.HUMANIZED);
+            }
 
             FileDescriptor fd = uploadField.getFileDescriptor();
             try {
@@ -192,9 +220,9 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         return result;
     }
 
-    private float[] resizeAndConvert2Grayscale(BufferedImage source){
+    private float[] resizeAndConvert2Grayscale(BufferedImage source) {
         float[] array = new float[1024];
-        try{
+        try {
             int IMG_WIDTH = 32;
             int IMG_HEIGHT = 32;
             BufferedImage gray = new BufferedImage(IMG_WIDTH, IMG_HEIGHT, source.getType());
@@ -208,8 +236,8 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
                     int g = (rgb >> 8) & 0xFF;
                     int b = (rgb & 0xFF);
                     int grayPixel = (r + g + b) / 3;
-                    float floatPixel = (float)grayPixel;
-                    array[j * IMG_WIDTH + i] =  floatPixel/255*2-1;
+                    float floatPixel = (float) grayPixel;
+                    array[j * IMG_WIDTH + i] = floatPixel / 255 * 2 - 1;
                 }
             }
         } catch (Exception e) {
@@ -218,7 +246,7 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         return array;
     }
 
-    private int predictClass(Tensor resultTensor){
+    private int predictClass(Tensor resultTensor) {
         float[][] m = new float[1][43];
         m[0] = new float[43];
         Arrays.fill(m[0], 0);
@@ -238,9 +266,9 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         return predict;
     }
 
-    private Tensor createInputTensor(float[] array){
+    private Tensor createInputTensor(float[] array) {
         Tensor inputTensor = Tensor.create(new long[]{1, 32, 32, 1});
-        if(array!=null && array.length==1024){
+        if (array != null && array.length == 1024) {
             FloatBuffer fb = FloatBuffer.allocate(1024);
             fb.put(array);
             fb.rewind();
@@ -249,7 +277,7 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         return inputTensor;
     }
 
-    private Tensor performModel(Session sess, Tensor inputTensor){
+    private Tensor performModel(Session sess, Tensor inputTensor) {
         Tensor result = sess.runner()
                 .feed("input_tensor", inputTensor)
                 .fetch("output_tensor")
@@ -257,8 +285,9 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         return result;
     }
 
-    private static class Labels{
+    private static class Labels {
         private static final Map<Integer, String> labels = new HashMap<>();
+
         static {
             labels.put(0, "Speed limit (20km/h)");
             labels.put(1, "Speed limit (30km/h)");
@@ -305,7 +334,7 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
             labels.put(42, "End of no passing by vehicles over 3.5 metric tons");
         }
 
-        public static Map<Integer, String> getLabels(){
+        public static Map<Integer, String> getLabels() {
             return labels;
         }
     }
