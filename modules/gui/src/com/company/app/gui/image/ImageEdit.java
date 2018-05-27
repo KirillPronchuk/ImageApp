@@ -42,6 +42,7 @@ import javax.inject.Inject;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.net.Socket;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -86,7 +87,7 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
         uploadField.addFileUploadSucceedListener(event -> {
 
             AnnotationConfigApplicationContext context =
-                    new AnnotationConfigApplicationContext(TfConfig.class, CcConfig.class);
+                    new AnnotationConfigApplicationContext(TfConfig.class);
 
 
             try {
@@ -94,24 +95,20 @@ public class ImageEdit extends AbstractEditor<com.company.app.entity.Image> {
 
                 Session session = processor.getSession();
 
-                CcProcessor ccprocessor = context.getBean("ccProcessorService", CcProcessor.class);
-
-                CascadeClassifier classifier = ccprocessor.getClassifier();
-
                 File file = fileUploadingAPI.getFile(uploadField.getFileId());
 
                 if (file != null) {
-                    Mat matimage = Imgcodecs.imread(file.getAbsolutePath());
-                    MatOfRect signDetections = new MatOfRect();
-                    classifier.detectMultiScale(matimage, signDetections);
-
-
                     BufferedImage image = ImageIO.read(file);
-                    for (Rect rect : signDetections.toArray()) {
-                        int x = rect.x;
-                        int y = rect.y;
-                        int width = rect.width;
-                        int height = rect.height;
+                    Socket s = new Socket("localhost", 3128);
+                    s.getOutputStream().write(file.getAbsolutePath().getBytes());
+                    DataInputStream dIn = new DataInputStream(s.getInputStream());
+                    int length = dIn.readInt();
+
+                    for(int i=0; i<length; i++){
+                        int x = dIn.readInt();
+                        int y = dIn.readInt();
+                        int width = dIn.readInt();
+                        int height = dIn.readInt();
 
                         BufferedImage subimage = image.getSubimage(x, y, x + width, y + height);
                         int resolvedClass = predict(subimage, session);
